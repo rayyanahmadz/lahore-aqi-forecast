@@ -1,4 +1,6 @@
 import joblib
+import math
+import requests
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -25,6 +27,43 @@ EXTRA = {  # (for Unhealthy for Sensitive, for Unhealthy and worse)
 
 def cat(a):
     return "Good/Moderate" if a <= 100 else "Unhealthy for Sensitive" if a <= 150 else "Unhealthy" if a <= 200 else "Very Unhealthy/Hazardous"
+
+CALIB = 1.0  # live model PM2.5 is divided by this (set from the Colab check)
+
+def pm25_to_aqi(c):
+    c = math.floor(c * 10) / 10
+    for lo, hi, ilo, ihi in [(0, 12, 0, 50), (12.1, 35.4, 51, 100), (35.5, 55.4, 101, 150), (55.5, 150.4, 151, 200),
+                             (150.5, 250.4, 201, 300), (250.5, 350.4, 301, 400), (350.5, 500.4, 401, 500)]:
+        if c <= hi:
+            return round((ihi - ilo) / (hi - lo) * (c - lo) + ilo)
+    return 500
+
+@st.cache_data(ttl=3600)
+def fetch_live():
+    r = requests.get("https://air-quality-api.open-meteo.com/v1/air-quality", timeout=15, params={
+        "latitude": 31.5497, "longitude": 74.3436, "hourly": "pm2_5",
+        "past_days": 7, "forecast_days": 1, "timezone": "Asia/Karachi"})
+    r.raise_for_status()
+    h = r.json()["hourly"]
+    s = pd.Series(h["pm2_5"], index=pd.to_datetime(h["time"])).dropna()
+    s = s[s.index <= pd.Timestamp.now(tz="Asia/Karachi").tz_localize(None)]
+    daily = s.groupby(s.index.date).mean().tail(7)
+    if len(daily) < 7:
+        raise ValueError("not enough days")
+    return [min(500, max(0, pm25_to_aqi(v / CALIB))) for v in daily.values[::-1]], str(daily.index[-1])
+
+def load_live():
+    try:
+        v, last = fetch_live()
+        for i in range(7):
+            st.session_state[f"d{i}"] = int(v[i])
+        st.session_state["src"] = f"Live PM2.5 for Lahore from Open-Meteo, converted to AQI. Latest day: {last}."
+    except Exception:
+        st.session_state["src"] = None
+
+def refresh():
+    fetch_live.clear()
+    load_live()
 
 @st.cache_resource
 def models():
@@ -58,10 +97,18 @@ st.caption("Machine-learning forecast of Lahore's US-EPA AQI, 1 to 3 days ahead"
 t1, t2, t3, t4 = st.tabs(["🔮 Forecast", "📊 Model evidence", "🗓️ Smog pattern", "ℹ️ About"])
 
 with t1:
-    st.write("Enter the last 7 days of US AQI for Lahore (e.g. from IQAir). Day 0 is today.")
-    defaults = [180, 175, 190, 170, 165, 185, 200]
+    if "src" not in st.session_state:
+        for i, v in enumerate([180, 175, 190, 170, 165, 185, 200]):
+            st.session_state[f"d{i}"] = v
+        load_live()
+    st.write("The last 7 days of AQI are fetched automatically. You can edit any value.")
+    st.button("🔄 Refresh live data", on_click=refresh)
+    if st.session_state["src"]:
+        st.caption("✅ " + st.session_state["src"])
+    else:
+        st.warning("Live data is unavailable, so example values are shown. Please enter the last 7 days manually.")
     cols = st.columns(7)
-    vals = [cols[i].number_input("Today" if i == 0 else f"-{i}d", 0, 500, defaults[i], key=f"d{i}") for i in range(7)]
+    vals = [cols[i].number_input("Today" if i == 0 else f"-{i}d", 0, 500, key=f"d{i}") for i in range(7)]
     c1, c2 = st.columns(2)
     today = c1.date_input("Today's date", value=date.today())
     who = c2.selectbox("Who is this advice for?", list(EXTRA))
@@ -133,5 +180,5 @@ convert PM2.5 to AQI with the US EPA formula → build features (today, 1 and 2 
 train Linear Regression to predict the *change* in AQI → time-based 80/20 test against a naive baseline → this app.
 
 **Limitations:** one station, about 790 days, simple model, modest gains over the baseline, and 120 filled-in days.
-Forecasts are estimates, not official health guidance.
+Live inputs come from Open-Meteo's air-quality model for Lahore, not the training station, so they can differ from ground readings. Forecasts are estimates, not official health guidance.
 """)
