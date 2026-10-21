@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error
 
 st.set_page_config(page_title="Lahore AQI Forecast", page_icon=":material/air:", layout="wide")
-AUTHOR = "Your Name · Course · University"   # <- edit this line
+AUTHOR = "Rayyan · IML · UOL"   # <- edit this line
 TYPICAL_ERR = 45
 LABELS = {"aqi": "Today's AQI", "aqi_lag1": "Yesterday", "aqi_lag2": "2 days ago", "aqi_roll3": "3-day average",
           "aqi_roll7": "7-day average", "is_smog_season": "Smog season (Oct-Feb)"}
