@@ -10,6 +10,16 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error
 
 st.set_page_config(page_title="Lahore AQI Forecast", page_icon="🌫️", layout="wide")
+AUTHOR = "Your Name · Course · University"   # <- edit this line
+TYPICAL_ERR = 45
+LABELS = {"aqi": "Today's AQI", "aqi_lag1": "Yesterday", "aqi_lag2": "2 days ago", "aqi_roll3": "3-day average",
+          "aqi_roll7": "7-day average", "is_smog_season": "Smog season (Oct-Feb)"}
+DOT = """digraph G { rankdir=LR; bgcolor="transparent";
+node [shape=box, style="rounded,filled", fillcolor="#1B2030", fontcolor="white", color="#FF6B35", fontname="Helvetica"];
+edge [color="#999999"];
+A [label="Collect data\nOpenAQ + Open-Meteo"]; B [label="Clean\nfill 120 gaps"]; C [label="PM2.5 to AQI\nUS EPA formula"];
+D [label="Features\nlags, averages, season"]; E [label="Train\nLinear Regression"]; F [label="Test vs baseline\ntime-based split"]; G [label="Streamlit app\nlive forecast"];
+A -> B -> C -> D -> E -> F -> G; }"""
 F = ["aqi", "aqi_lag1", "aqi_lag2", "aqi_roll3", "aqi_roll7", "is_smog_season"]
 CATS = {"Good/Moderate": ("#8BC34A", "#1b1b1b"), "Unhealthy for Sensitive": ("#FF9800", "#1b1b1b"),
         "Unhealthy": ("#E53935", "#ffffff"), "Very Unhealthy/Hazardous": ("#7E0023", "#ffffff")}
@@ -28,7 +38,7 @@ EXTRA = {  # (for Unhealthy for Sensitive, for Unhealthy and worse)
 def cat(a):
     return "Good/Moderate" if a <= 100 else "Unhealthy for Sensitive" if a <= 150 else "Unhealthy" if a <= 200 else "Very Unhealthy/Hazardous"
 
-CALIB = 1.0  # live model PM2.5 is divided by this (set from the Colab check)
+CALIB = 0.52  # live model PM2.5 is divided by this (live source reads about half of the station)
 
 def pm25_to_aqi(c):
     c = math.floor(c * 10) / 10
@@ -92,47 +102,66 @@ def backtest(h):  # same 80/20 time split used in training
     m = LinearRegression().fit(sc.transform(Xa), ya - Xa.aqi)
     return yb, Xb.aqi + m.predict(sc.transform(Xb)), Xb.aqi
 
-st.title("🌫️ Lahore AQI Forecast")
+st.markdown("<h1 style='margin-bottom:0'>🌫️ Lahore Smog Forecast</h1>", unsafe_allow_html=True)
 st.caption("Machine-learning forecast of Lahore's US-EPA AQI, 1 to 3 days ahead")
 t1, t2, t3, t4 = st.tabs(["🔮 Forecast", "📊 Model evidence", "🗓️ Smog pattern", "ℹ️ About"])
+
+def card(title, p, rng=True):
+    bg, fg = CATS[cat(p)]
+    sub = f"<div style='font-size:12px;opacity:.85'>likely {max(0, p - TYPICAL_ERR)} to {min(500, p + TYPICAL_ERR)}</div>" if rng else ""
+    return (f"<div style='background:{bg};color:{fg};padding:14px;border-radius:14px;text-align:center'>"
+            f"<div style='opacity:.85'>{title}</div><div style='font-size:40px;font-weight:700'>{p}</div>"
+            f"<div style='font-size:13px'>{cat(p)}</div>{sub}</div>")
 
 with t1:
     if "src" not in st.session_state:
         for i, v in enumerate([180, 175, 190, 170, 165, 185, 200]):
             st.session_state[f"d{i}"] = v
         load_live()
-    st.write("The last 7 days of AQI are fetched automatically. You can edit any value.")
-    st.button("🔄 Refresh live data", on_click=refresh)
-    if st.session_state["src"]:
-        st.caption("✅ " + st.session_state["src"])
-    else:
-        st.warning("Live data is unavailable, so example values are shown. Please enter the last 7 days manually.")
-    cols = st.columns(7)
-    vals = [cols[i].number_input("Today" if i == 0 else f"-{i}d", 0, 500, key=f"d{i}") for i in range(7)]
-    c1, c2 = st.columns(2)
-    today = c1.date_input("Today's date", value=date.today())
-    who = c2.selectbox("Who is this advice for?", list(EXTRA))
-    if st.button("Forecast"):
-        row = pd.DataFrame([{"aqi": vals[0], "aqi_lag1": vals[1], "aqi_lag2": vals[2],
-                             "aqi_roll3": sum(vals[:3]) / 3, "aqi_roll7": sum(vals) / 7,
-                             "is_smog_season": int(today.month in [10, 11, 12, 1, 2])}])[F]
-        preds = []
-        for h in (1, 2, 3):
-            sc, m = models()[h]
-            preds.append(int(round(min(max(vals[0] + m.predict(sc.transform(row))[0], 0), 500))))
-        for col, h, p in zip(st.columns(3), (1, 2, 3), preds):
-            bg, fg = CATS[cat(p)]
-            col.markdown(f"<div style='background:{bg};color:{fg};padding:16px;border-radius:12px;text-align:center'>"
-                         f"<div>In {h} day{'s' if h > 1 else ''}</div><div style='font-size:42px;font-weight:700'>{p}</div>"
-                         f"<div>{cat(p)}</div></div>", unsafe_allow_html=True)
-        worst = cat(max(preds)); msg = BASE[worst]
-        if worst != "Good/Moderate":
-            msg += " " + EXTRA[who][0 if worst == "Unhealthy for Sensitive" else 1]
-        st.info(f"**{who}:** {msg}")
+    who = st.selectbox("Who is this advice for?", list(EXTRA))
+    res = st.container()
+    with st.expander("✏️ Edit the 7 days of AQI and the date"):
+        st.button("🔄 Refresh live data", on_click=refresh)
+        if st.session_state["src"]:
+            st.caption("✅ " + st.session_state["src"] + " You can edit any value.")
+        else:
+            st.warning("Live data is unavailable, so example values are shown. Please enter the last 7 days manually.")
+        cols = st.columns(7)
+        vals = [cols[i].number_input("Today" if i == 0 else f"-{i}d", 0, 500, key=f"d{i}") for i in range(7)]
+        today = st.date_input("Today's date", value=date.today())
+    row = pd.DataFrame([{"aqi": vals[0], "aqi_lag1": vals[1], "aqi_lag2": vals[2], "aqi_roll3": sum(vals[:3]) / 3,
+                         "aqi_roll7": sum(vals) / 7, "is_smog_season": int(today.month in [10, 11, 12, 1, 2])}])[F]
+    preds = []
+    for h in (1, 2, 3):
+        sc, m = models()[h]
+        preds.append(int(round(min(max(vals[0] + m.predict(sc.transform(row))[0], 0), 500))))
+    worst = cat(max(preds)); bg, fg = CATS[worst]
+    msg = BASE[worst]
+    if worst != "Good/Moderate":
+        msg += " " + EXTRA[who][0 if worst == "Unhealthy for Sensitive" else 1]
+    with res:
+        st.markdown(f"<div style='background:{bg};color:{fg};padding:18px 22px;border-radius:16px;margin-bottom:12px'>"
+                    f"<div style='opacity:.85'>Lahore · next 3 days</div><div style='font-size:30px;font-weight:700'>{worst}</div>"
+                    f"<div>{who}: {msg}</div></div>", unsafe_allow_html=True)
+        for col, (t, p, r) in zip(st.columns(4), [("Today", vals[0], False), ("In 1 day", preds[0], True),
+                                                   ("In 2 days", preds[1], True), ("In 3 days", preds[2], True)]):
+            col.markdown(card(t, p, r), unsafe_allow_html=True)
+        st.markdown("".join(f"<span style='background:{b};color:{f};padding:3px 10px;border-radius:10px;margin:8px 6px 0 0;"
+                            f"display:inline-block;font-size:12px'>{n}</span>" for n, (b, f) in CATS.items()), unsafe_allow_html=True)
+        st.caption(f"Typical forecast error is about {TYPICAL_ERR} AQI points, so treat the numbers as estimates.")
         a = pd.DataFrame({"date": pd.to_datetime([today - timedelta(days=i) for i in range(6, -1, -1)]), "AQI": vals[::-1], "kind": "Entered"})
         f = pd.DataFrame({"date": pd.to_datetime([today + timedelta(days=i) for i in range(4)]), "AQI": [vals[0]] + preds, "kind": "Forecast"})
-        st.altair_chart(alt.Chart(pd.concat([a, f])).mark_line(point=True).encode(
+        sc2, m2 = models()[2]
+        push = pd.DataFrame({"clue": [LABELS[k] for k in F], "push": m2.coef_ * sc2.transform(row)[0]})
+        l, r = st.columns(2)
+        l.write("**Last 7 days and forecast**")
+        l.altair_chart(alt.Chart(pd.concat([a, f])).mark_line(point=True).encode(
             x="date:T", y="AQI:Q", color="kind:N", strokeDash="kind:N").properties(width="container", height=280))
+        r.write("**Why this forecast? (2-day model)**")
+        r.altair_chart(alt.Chart(push).mark_bar().encode(
+            x="push:Q", y=alt.Y("clue:N", sort="-x"),
+            color=alt.condition(alt.datum.push > 0, alt.value("#E53935"), alt.value("#4CAF50"))).properties(width="container", height=280))
+        r.caption("Red pushes the forecast above today's AQI, green below. The clues overlap, so read the bars as a rough guide, not exact causes.")
 
 with t2:
     if history() is None:
@@ -174,6 +203,7 @@ with t3:
         st.caption("Data covers Dec 2022 to Mar 2025 from one monitoring station.")
 
 with t4:
+    st.graphviz_chart(DOT)
     st.markdown("""
 **Pipeline:** daily PM2.5 (OpenAQ, US Diplomatic Post station, Lahore) + daily weather (Open-Meteo) → fill 120 missing days →
 convert PM2.5 to AQI with the US EPA formula → build features (today, 1 and 2 days ago, 3 and 7 day averages, smog-season flag) →
@@ -182,3 +212,6 @@ train Linear Regression to predict the *change* in AQI → time-based 80/20 test
 **Limitations:** one station, about 790 days, simple model, modest gains over the baseline, and 120 filled-in days.
 Live inputs come from Open-Meteo's air-quality model for Lahore, not the training station, so they can differ from ground readings. Forecasts are estimates, not official health guidance.
 """)
+
+st.divider()
+st.caption(f"Built by {AUTHOR}")
