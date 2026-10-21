@@ -9,8 +9,8 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error
 
-st.set_page_config(page_title="Lahore AQI Forecast", page_icon="🌫️", layout="wide")
-AUTHOR = "Rayyan · IML · UOL"   # <- edit this line
+st.set_page_config(page_title="Lahore AQI Forecast", page_icon=":material/air:", layout="wide")
+AUTHOR = "Your Name · Course · University"   # <- edit this line
 TYPICAL_ERR = 45
 LABELS = {"aqi": "Today's AQI", "aqi_lag1": "Yesterday", "aqi_lag2": "2 days ago", "aqi_roll3": "3-day average",
           "aqi_roll7": "7-day average", "is_smog_season": "Smog season (Oct-Feb)"}
@@ -102,9 +102,9 @@ def backtest(h):  # same 80/20 time split used in training
     m = LinearRegression().fit(sc.transform(Xa), ya - Xa.aqi)
     return yb, Xb.aqi + m.predict(sc.transform(Xb)), Xb.aqi
 
-st.markdown("<h1 style='margin-bottom:0'>🌫️ Lahore Smog Forecast</h1>", unsafe_allow_html=True)
+st.markdown("# :material/air: Lahore Smog Forecast")
 st.caption("Machine-learning forecast of Lahore's US-EPA AQI, 1 to 3 days ahead")
-t1, t2, t3, t4 = st.tabs(["🔮 Forecast", "📊 Model evidence", "🗓️ Smog pattern", "ℹ️ About"])
+t1, t2, t3, t4 = st.tabs([":material/air: Forecast", ":material/analytics: Model evidence", ":material/calendar_month: Smog pattern", ":material/info: About"])
 
 def card(title, p, rng=True):
     bg, fg = CATS[cat(p)]
@@ -120,8 +120,8 @@ with t1:
         load_live()
     who = st.selectbox("Who is this advice for?", list(EXTRA))
     res = st.container()
-    with st.expander("✏️ Edit the 7 days of AQI and the date"):
-        st.button("🔄 Refresh live data", on_click=refresh)
+    with st.expander(":material/edit: Edit the 7 days of AQI and the date"):
+        st.button("Refresh live data", icon=":material/refresh:", on_click=refresh)
         if st.session_state["src"]:
             st.caption("✅ " + st.session_state["src"] + " You can edit any value.")
         else:
